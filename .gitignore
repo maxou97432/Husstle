@@ -1,0 +1,8 @@
+env/
+__pycache__/
+*.pyc
+.env
+data/trade_log.json
+*server.log
+.DS_Store
+data/*.csv\ndata/*.pkl

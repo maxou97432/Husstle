@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Straddle Optimizer ⚡</title>
+  <meta name="description" content="Dashboard Delta-Neutral Breakout — Paradex × Variational.io" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+  <!-- ═══ NOISE LAYER ═══ -->
+  <div class="noise"></div>
+
+  <!-- ═══ HEADER ═══ -->
+  <header>
+    <nav>
+      <div class="nav-brand">
+        <svg class="nav-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+        </svg>
+        <span>Straddle Optimizer</span>
+      </div>
+      <div class="nav-links">
+        <button class="nav-tab active" onclick="switchMainTab('dashboard')">Dashboard</button>
+        <button class="nav-tab" onclick="switchMainTab('journal')">Journal</button>
+      </div>
+      <div class="nav-center">
+        <span id="meta-symbol" class="nav-pill">ETHUSDT</span>
+        <span id="meta-leverage" class="nav-pill nav-pill-dim">×50</span>
+        <span id="meta-interval" class="nav-pill nav-pill-dim">15M</span>
+      </div>
+      <div class="nav-right">
+        <div id="live-dot" class="live-indicator">
+          <span class="live-dot"></span>
+          <span id="meta-price-label" class="live-label">LIVE</span>
+        </div>
+        <div id="refresh-badge" class="status-pill status-live">↻ AUTO</div>
+      </div>
+    </nav>
+  </header>
+
+  <!-- ═══ MAIN DASHBOARD ═══ -->
+  <main id="tab-dashboard" class="main-tab active">
+
+    <!-- ── HERO ROW ── -->
+    <section class="hero-row">
+      <div class="hero-left">
+        <p class="hero-eyebrow">Paradex × Variational.io</p>
+        <h1 class="hero-title">Delta-Neutral<br />Breakout Strategy</h1>
+        <p class="hero-sub" id="meta-timestamp">–</p>
+      </div>
+      <div class="hero-metrics">
+        <div class="metric-pill" id="verdict-pill">
+          <div id="verdict-dot" class="metric-dot"></div>
+          <span id="verdict-text">Chargement…</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── WARNING BANNER ── -->
+    <div id="warning-banner" class="warning-banner hidden">
+      ⚠ &nbsp;<strong>MARCHÉ PAS EN COMPRESSION</strong> — Risque de double SL élevé. Les niveaux ci-dessous sont
+      indicatifs.
+    </div>
+
+    <!-- ── ROW: COMPRESSION + ENTRY ── -->
+    <div class="grid-2">
+
+      <!-- Compression -->
+      <div class="card">
+        <div class="card-label">
+          <span>Analyse Volatilité</span>
+          <span id="kline-info" class="card-label-right">– bougies</span>
+        </div>
+
+        <div class="indicator-row">
+          <div class="indicator-block">
+            <div class="indicator-header">
+              <div id="atr-dot" class="status-dot dot-red"></div>
+              <span class="indicator-name">ATR</span>
+            </div>
+            <div id="atr-now" class="indicator-big">–</div>
+            <div id="atr-detail" class="indicator-sub">–</div>
+          </div>
+
+          <div class="indicator-sep"></div>
+
+          <div class="indicator-block">
+            <div class="indicator-header">
+              <div id="bbw-dot" class="status-dot dot-red"></div>
+              <span class="indicator-name">BB Width</span>
+            </div>
+            <div id="bbw-now" class="indicator-big">–</div>
+            <div id="bbw-detail" class="indicator-sub">–</div>
+          </div>
+        </div>
+
+        <div id="verdict-box" class="verdict-bar verdict-red">
+          <span id="verdict-bar-text">Chargement…</span>
+        </div>
+        
+        <div class="chart-container" style="position: relative; height: 120px; width: 100%; margin-top: 1rem;">
+          <canvas id="volatility-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Entry / Prix -->
+      <div class="card">
+        <div class="card-label">
+          <span>Entrée du Trade</span>
+          <span id="refresh-badge2" class="card-label-badge">↻ AUTO</span>
+        </div>
+
+        <p class="field-label">Option A — Heure exacte du trade :</p>
+        <div class="input-row">
+          <input id="time-input" type="text" placeholder="HH:MM:SS  (ex: 15:09:00)" class="inp" autocomplete="off"
+            oninput="onModeChange()" />
+          <button class="btn-primary" onclick="fetchAnalysis()">Analyser →</button>
+        </div>
+
+        <p class="field-label" style="margin-top:1rem">Option B — Prix réels par DEX (prioritaire) :</p>
+        <div class="split-inputs">
+          <div class="split-field">
+            <label class="split-label">📈 LONG <span class="split-dex">Variational</span></label>
+            <input id="price-long" type="number" placeholder="ex: 2074.00" step="0.01" class="inp inp-sm"
+              oninput="onModeChange()" />
+          </div>
+          <div class="split-field">
+            <label class="split-label">📉 SHORT <span class="split-dex">Paradex</span></label>
+            <input id="price-short" type="number" placeholder="ex: 2075.20" step="0.01" class="inp inp-sm"
+              oninput="onModeChange()" />
+          </div>
+        </div>
+
+        <div id="spread-row" class="spread-chip hidden">
+          Spread · <strong id="spread-val">–</strong> &nbsp;(<span id="spread-pct">–</span>%)
+        </div>
+
+        <div class="refresh-footer">
+          <button class="btn-ghost" onclick="fetchAnalysis()">↻ Rafraîchir</button>
+          <div class="countdown-block">
+            <span id="countdown-label" class="countdown-label">Prochain refresh dans</span>
+            <span id="countdown" class="countdown-num">30s</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /grid-2 -->
+
+    <!-- ── ROW: LONG + SHORT ── -->
+    <div class="grid-2">
+
+      <!-- LONG -->
+      <div class="card card-long">
+        <div class="card-label">
+          <div style="display:flex;align-items:center;gap:0.5rem">
+            <span class="side-icon side-long">↑</span>
+            <span>LONG</span>
+          </div>
+          <span class="dex-badge badge-vari">Variational.io</span>
+        </div>
+
+        <div class="entry-row">
+          <span class="entry-label">Prix d'entrée</span>
+          <span id="long-entry" class="entry-price">–</span>
+        </div>
+
+        <div class="level-group">
+          <div class="level level-tp">
+            <div class="level-top">
+              <span class="level-name">TAKE PROFIT</span>
+              <div style="display:flex;gap:0.4rem;align-items:center">
+                <span id="long-tp-pct" class="level-pct green">–</span>
+                <span id="long-tp-roi" class="level-badge">–% ROI</span>
+              </div>
+            </div>
+            <div class="level-bottom">
+              <span class="level-pnl green" id="long-tp-pnl">–</span>
+              <span class="level-arr">→</span>
+              <span class="level-price" id="long-tp-price">–</span>
+            </div>
+          </div>
+          <div class="level level-sl">
+            <div class="level-top">
+              <span class="level-name">STOP LOSS</span>
+              <div style="display:flex;gap:0.4rem;align-items:center">
+                <span id="long-sl-pct" class="level-pct red">–</span>
+                <span id="long-sl-roi" class="level-badge">–% ROI</span>
+              </div>
+            </div>
+            <div class="level-bottom">
+              <span class="level-pnl red" id="long-sl-pnl">–</span>
+              <span class="level-arr">→</span>
+              <span class="level-price" id="long-sl-price">–</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SHORT -->
+      <div class="card card-short">
+        <div class="card-label">
+          <div style="display:flex;align-items:center;gap:0.5rem">
+            <span class="side-icon side-short">↓</span>
+            <span>SHORT</span>
+          </div>
+          <span class="dex-badge badge-para">Paradex</span>
+        </div>
+
+        <div class="entry-row">
+          <span class="entry-label">Prix d'entrée</span>
+          <span id="short-entry" class="entry-price">–</span>
+        </div>
+
+        <div class="level-group">
+          <div class="level level-tp">
+            <div class="level-top">
+              <span class="level-name">TAKE PROFIT</span>
+              <div style="display:flex;gap:0.4rem;align-items:center">
+                <span id="short-tp-pct" class="level-pct green">–</span>
+                <span id="short-tp-roi" class="level-badge">–% ROI</span>
+              </div>
+            </div>
+            <div class="level-bottom">
+              <span class="level-pnl green" id="short-tp-pnl">–</span>
+              <span class="level-arr">→</span>
+              <span class="level-price" id="short-tp-price">–</span>
+            </div>
+          </div>
+          <div class="level level-sl">
+            <div class="level-top">
+              <span class="level-name">STOP LOSS</span>
+              <div style="display:flex;gap:0.4rem;align-items:center">
+                <span id="short-sl-pct" class="level-pct red">–</span>
+                <span id="short-sl-roi" class="level-badge">–% ROI</span>
+              </div>
+            </div>
+            <div class="level-bottom">
+              <span class="level-pnl red" id="short-sl-pnl">–</span>
+              <span class="level-arr">→</span>
+              <span class="level-price" id="short-sl-price">–</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /grid-2 -->
+
+    <!-- ── SUMMARY ROW ── -->
+    <div class="summary-strip">
+      <div class="sum-item">
+        <div class="sum-label">Position / DEX</div>
+        <div class="sum-val" id="sum-position">–</div>
+      </div>
+      <div class="sum-sep"></div>
+      <div class="sum-item">
+        <div class="sum-label">Marge / DEX</div>
+        <div class="sum-val" id="sum-collateral">–</div>
+      </div>
+      <div class="sum-sep"></div>
+      <div class="sum-item">
+        <div class="sum-label">ROI cible</div>
+        <div class="sum-val" id="sum-roi-target">–</div>
+      </div>
+      <div class="sum-sep"></div>
+      <div class="sum-item">
+        <div class="sum-label">Ratio TP/SL</div>
+        <div class="sum-val" id="sum-rr">–</div>
+      </div>
+      <div class="sum-sep"></div>
+      <div class="sum-item">
+        <div class="sum-label">Profit net</div>
+        <div class="sum-val sum-green" id="sum-net">–</div>
+      </div>
+      <div class="sum-sep"></div>
+      <div class="sum-item">
+        <div class="sum-label">Liquidation ≈</div>
+        <div class="sum-val sum-red" id="sum-liq">–</div>
+      </div>
+    </div>
+
+    <!-- ── ML SUGGESTION BUBBLE ── -->
+    <div id="ml-bubble" class="ml-bubble hidden">
+      <div class="ml-bubble-header">
+        <div class="ml-icon">&#x1F4A1;</div>
+        <div>
+          <div class="ml-title">Paramètres suggérés par le ML</div>
+          <div id="ml-market-state" class="ml-sub">–</div>
+        </div>
+        <div id="ml-pnl-badge" class="ml-pnl-badge">–</div>
+      </div>
+      <div class="ml-params-row">
+        <div class="ml-param">
+          <span class="ml-param-label">Mult. ATR (SL)</span>
+          <span id="ml-atr-mult" class="ml-param-val">–</span>
+        </div>
+        <div class="ml-param-sep"></div>
+        <div class="ml-param">
+          <span class="ml-param-label">ROI cible</span>
+          <span id="ml-roi" class="ml-param-val">–</span>
+        </div>
+        <div class="ml-param-sep"></div>
+        <div class="ml-param">
+          <span class="ml-param-label">Compression</span>
+          <span id="ml-comp" class="ml-param-val">–</span>
+        </div>
+        <div class="ml-param-sep"></div>
+        <button class="btn-primary ml-apply-btn" onclick="applyMlParams()">✅ Appliquer ces paramètres</button>
+      </div>
+    </div>
+
+    <!-- ── SETTINGS ── -->
+    <div class="card card-settings">
+      <div class="settings-toggle" onclick="toggleSettings()" id="settings-toggle">
+        <span class="settings-toggle-label">⚙ Paramètres</span>
+        <!-- Mode selector -->
+        <div class="mode-tabs" onclick="event.stopPropagation()">
+          <button id="mode-tab-manual" class="mode-tab active" onclick="setMode('manual')">Manuel</button>
+          <button id="mode-tab-ml" class="mode-tab" onclick="setMode('ml')">&#x1F916; ML</button>
+        </div>
+        <span id="settings-chevron" class="settings-chevron">&#x25BC;</span>
+      </div>
+      <div id="settings-body" class="settings-body">
+        <div class="settings-grid">
+
+          <div class="settings-col">
+            <div class="settings-col-title">Marché</div>
+            <div class="sf"><label>Symbole</label>
+              <select id="p-symbol">
+                <option value="ETHUSDT">ETHUSDT</option>
+                <option value="BTCUSDT">BTCUSDT</option>
+                <option value="SOLUSDT">SOLUSDT</option>
+                <option value="HYPEUSDT">HYPEUSDT</option>
+              </select>
+            </div>
+            <div class="sf"><label>Intervalle</label>
+              <select id="p-interval">
+                <option value="5m">5m</option>
+                <option value="15m" selected>15m</option>
+                <option value="1h">1h</option>
+                <option value="4h">4h</option>
+              </select>
+            </div>
+            <div class="sf"><label>Nb bougies</label>
+              <input type="number" id="p-kline-limit" value="150" min="50" max="500" step="10" />
+            </div>
+          </div>
+
+          <div class="settings-col">
+            <div class="settings-col-title">Position</div>
+            <div class="sf"><label>Taille / DEX (USDC)</label>
+              <input type="number" id="p-position" value="4000" min="100" step="100" />
+            </div>
+            <div class="sf"><label>Levier</label>
+              <input type="number" id="p-leverage" value="50" min="1" max="200" step="1" />
+            </div>
+            <div class="sf"><label>ROI cible sur marge (%)</label>
+              <input type="number" id="p-roi" value="15" min="1" max="100" step="1" />
+            </div>
+          </div>
+
+          <div class="settings-col">
+            <div class="settings-col-title">Risque</div>
+            <div class="sf"><label>Perte max collat. (%)</label>
+              <input type="number" id="p-max-loss" value="40" min="1" max="95" step="1" />
+            </div>
+            <div class="sf"><label>Ratio min TP/SL</label>
+              <input type="number" id="p-min-rr" value="1.5" min="0.5" max="5" step="0.1" />
+            </div>
+          </div>
+
+          <div class="settings-col">
+            <div class="settings-col-title">ATR &amp; Compression</div>
+            <div class="sf"><label>Mult. ATR (SL)</label>
+              <input type="number" id="p-atr-mult" value="1.5" min="0.5" max="5" step="0.1" />
+            </div>
+            <div class="sf"><label>Période ATR</label>
+              <input type="number" id="p-atr-period" value="14" min="5" max="100" step="1" />
+            </div>
+            <div class="sf"><label>Percentile compression</label>
+              <input type="number" id="p-compression" value="30" min="5" max="50" step="5" />
+            </div>
+          </div>
+
+        </div>
+
+        <div class="settings-actions">
+          <button class="btn-primary" onclick="applySettings()">Appliquer &amp; Analyser</button>
+          <button class="btn-ghost" onclick="resetSettings()">Réinitialiser</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ═══ MAIN JOURNAL ═══ -->
+  <main id="tab-journal" class="main-tab hidden">
+    <section class="hero-row">
+      <div class="hero-left">
+        <h1 class="hero-title">Journal de Trades</h1>
+        <p class="hero-sub" id="meta-timestamp">Historique d'exécution</p>
+      </div>
+    </section>
+
+    <div class="grid-1" style="margin-bottom: 2rem;">
+      <div class="card">
+        <div class="card-label">Nouveau Trade</div>
+        <form id="trade-form" class="trade-form" onsubmit="submitTrade(event)">
+          <div class="sf">
+            <label>Date (Auto par défaut)</label>
+            <input type="text" id="t-date" class="inp" placeholder="YYYY-MM-DD HH:MM:SS" />
+          </div>
+          <div class="sf">
+            <label>Symbole</label>
+            <input type="text" id="t-symbol" class="inp" value="ETHUSDT" required />
+          </div>
+          <div class="sf">
+            <label>Entrée LONG</label>
+            <input type="number" step="0.0001" id="t-long" class="inp" required />
+          </div>
+          <div class="sf">
+            <label>Entrée SHORT</label>
+            <input type="number" step="0.0001" id="t-short" class="inp" required />
+          </div>
+          <div class="sf">
+            <label>PnL Net ($)</label>
+            <input type="number" step="0.01" id="t-pnl" class="inp" required />
+          </div>
+          <div class="sf">
+            <label>Statut</label>
+            <select id="t-status" class="inp">
+              <option value="WON">WON</option>
+              <option value="LOST">LOST</option>
+              <option value="CLOSED">CLOSED (BE)</option>
+              <option value="OPEN">OPEN</option>
+            </select>
+          </div>
+          <div class="sf" style="grid-column: span 2;">
+            <label>Notes (Erreurs DEX, slip, etc.)</label>
+            <input type="text" id="t-notes" class="inp" />
+          </div>
+          <div class="sf" style="grid-column: span 2;">
+            <button type="submit" class="btn-primary">Enregistrer ce Trade</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Historique</div>
+      <div class="table-container">
+        <table class="trades-table" id="trades-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Symbole</th>
+              <th>Entrée LONG</th>
+              <th>Entrée SHORT</th>
+              <th>PnL</th>
+              <th>Statut</th>
+              <th>Notes</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="trades-body">
+            <!-- Rendu JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- ═══ LOADING ═══ -->
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loader-ring"></div>
+    <div class="loader-label">Récupération des données…</div>
+  </div>
+
+  <!-- ═══ TOAST ═══ -->
+  <div id="error-toast" class="toast hidden">
+    <span>❌</span>
+    <span id="error-msg">Erreur API</span>
+  </div>
+
+  <audio id="alert-sound" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
+
+  <script src="script.js"></script>
+</body>
+
+</html>
