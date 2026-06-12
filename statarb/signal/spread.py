@@ -6,14 +6,16 @@ def compute_spread(
     y: np.ndarray,
     x: np.ndarray,
     hedge_window: int = 240,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    spread[i] = y[i] - beta[i] * x[i]
-    beta computed causally over [i-hedge_window, i).
+    spread[i] = y[i] - beta[i]*x[i] - alpha[i]
+    beta, alpha computed causally over [i-hedge_window, i).
+
+    Returns (spread, beta, alpha).
     """
-    beta = rolling_ols_hedge(y, x, window=hedge_window)
-    spread = y - beta * x
-    return spread
+    beta, alpha = rolling_ols_hedge(y, x, window=hedge_window)
+    spread = y - beta * x - alpha
+    return spread, beta, alpha
 
 
 def rolling_zscore(
@@ -22,7 +24,7 @@ def rolling_zscore(
 ) -> np.ndarray:
     """
     Causal z-score at index i: (spread[i] - mean([i-window,i))) / std([i-window,i))
-    Uses prefix-sum trick for O(n).
+    Uses prefix-sum trick: O(n).
     """
     n = len(spread)
     z = np.full(n, np.nan)

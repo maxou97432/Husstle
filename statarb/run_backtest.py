@@ -1,5 +1,5 @@
 """
-Orchestrator: fetch data → compute signals → backtest → robustness → verdict GO/NO-GO.
+Orchestrator: fetch → signals → backtest → robustness → verdict GO/NO-GO.
 
 Usage:
     python run_backtest.py [--fetch] [--testnet]
@@ -8,7 +8,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+import os
 import numpy as np
+import polars as pl
+
+sys.path.insert(0, os.path.dirname(__file__))
 
 COINS = ["BTC", "ETH"]
 HEDGE_WINDOW = 240
@@ -17,25 +21,50 @@ ADF_WINDOW = 240
 ADF_STEP = 6
 
 
-def _align_funding(candle_ts: np.ndarray, funding_rows: list[dict]) -> np.ndarray:
-    """Map hourly funding to 4h candle timestamps via nearest-prior lookup."""
-    f_ts = np.array([r["ts"] for r in funding_rows], dtype=np.int64)
-    f_rate = np.array([r["rate"] for r in funding_rows], dtype=np.float64)
-    agg = np.zeros(len(candle_ts), dtype=np.float64)
-    for i, ts in enumerate(candle_ts):
-        # sum funding rates for the 4 hourly periods ending at this candle
-        mask = (f_ts > ts - 4 * 3600 * 1000) & (f_ts <= ts)
-        agg[i] = f_rate[mask].sum() if mask.any() else 0.0
-    return agg
+def _align_and_aggregate(
+    candles_btc: pl.LazyFrame,
+    candles_eth: pl.LazyFrame,
+    funding_btc: pl.LazyFrame,
+    funding_eth: pl.LazyFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """
+    Inner-join candles on common timestamps.
+    Aggregate funding to 4h windows aligned on candle timestamps.
+    Returns (aligned_candles, aligned_funding) as collected DataFrames.
+    """
+    btc = candles_btc.rename({"close": "close_btc", "open": "open_btc"}).select(["ts", "close_btc"])
+    eth = candles_eth.rename({"close": "close_eth", "open": "open_eth"}).select(["ts", "close_eth"])
+
+    candles = btc.join(eth, on="ts", how="inner").sort("ts").collect()
+
+    ts_arr = candles["ts"].to_numpy()
+
+    def agg_funding_to_4h(fund_lf: pl.LazyFrame) -> np.ndarray:
+        fund = fund_lf.sort("ts").collect()
+        f_ts = fund["ts"].to_numpy()
+        f_rate = fund["rate"].to_numpy()
+        agg = np.zeros(len(ts_arr), dtype=np.float64)
+        interval_ms = 4 * 3600 * 1000
+        for i, ts in enumerate(ts_arr):
+            mask = (f_ts > ts - interval_ms) & (f_ts <= ts)
+            agg[i] = f_rate[mask].sum() if mask.any() else 0.0
+        return agg
+
+    fund_btc_arr = agg_funding_to_4h(funding_btc)
+    fund_eth_arr = agg_funding_to_4h(funding_eth)
+
+    fund_df = pl.DataFrame({
+        "ts": ts_arr,
+        "fund_btc": fund_btc_arr,
+        "fund_eth": fund_eth_arr,
+    })
+
+    return candles, fund_df
 
 
 def run(fetch: bool, testnet: bool) -> None:
-    import sys, os
-    sys.path.insert(0, os.path.dirname(__file__))
-
-    from data.store import get_conn, load_candles, load_funding
+    from data.store import get_conn, load_candles_pl, load_funding_pl
     from data.fetch import fetch_all
-    from signal.hedge import rolling_ols_hedge
     from signal.spread import compute_spread, rolling_zscore
     from signal.cointegration import rolling_adf_pvalue
     from backtest.engine import BacktestConfig, run_backtest
@@ -47,44 +76,36 @@ def run(fetch: bool, testnet: bool) -> None:
 
     if fetch:
         print("=== Fetching data from Hyperliquid ===")
-        fetch_all(COINS, lookback_days=365, testnet=testnet)
+        fetch_all(COINS, lookback_days=730, testnet=testnet)
 
     conn = get_conn()
-    btc_rows = load_candles(conn, "BTC")
-    eth_rows = load_candles(conn, "ETH")
-    btc_fund_rows = load_funding(conn, "BTC")
-    eth_fund_rows = load_funding(conn, "ETH")
+    candles_btc = load_candles_pl(conn, "BTC")
+    candles_eth = load_candles_pl(conn, "ETH")
+    funding_btc = load_funding_pl(conn, "BTC")
+    funding_eth = load_funding_pl(conn, "ETH")
     conn.close()
 
-    if not btc_rows or not eth_rows:
-        print("ERROR: no candle data. Run with --fetch first.")
+    print("Aligning & aggregating funding…")
+    candles, fund_df = _align_and_aggregate(candles_btc, candles_eth, funding_btc, funding_eth)
+
+    n = len(candles)
+    if n < HEDGE_WINDOW + SPREAD_WINDOW + 10:
+        print(f"ERROR: only {n} common bars (need > {HEDGE_WINDOW + SPREAD_WINDOW + 10}). Run --fetch first.")
         sys.exit(1)
 
-    # Align on common timestamps
-    btc_ts = {r["ts"]: r for r in btc_rows}
-    eth_ts = {r["ts"]: r for r in eth_rows}
-    common = sorted(set(btc_ts) & set(eth_ts))
+    print(f"=== {n} aligned 4h bars ===")
 
-    if len(common) < HEDGE_WINDOW + SPREAD_WINDOW + 10:
-        print(f"ERROR: only {len(common)} common bars (need >{HEDGE_WINDOW + SPREAD_WINDOW + 10})")
-        sys.exit(1)
-
-    ts_arr = np.array(common, dtype=np.int64)
-    close_btc = np.array([btc_ts[t]["close"] for t in common])
-    close_eth = np.array([eth_ts[t]["close"] for t in common])
-
+    close_btc = candles["close_btc"].to_numpy()
+    close_eth = candles["close_eth"].to_numpy()
     log_btc = np.log(close_btc)
     log_eth = np.log(close_eth)
+    fund_btc_arr = fund_df["fund_btc"].to_numpy()
+    fund_eth_arr = fund_df["fund_eth"].to_numpy()
 
-    fund_btc = _align_funding(ts_arr, btc_fund_rows)
-    fund_eth = _align_funding(ts_arr, eth_fund_rows)
+    print("Computing spread (OLS β + α, causal)…")
+    spread, beta, alpha = compute_spread(log_eth, log_btc, hedge_window=HEDGE_WINDOW)
 
-    print(f"=== {len(common)} aligned 4h bars ===")
-    print("Computing hedge ratio…")
-    beta = rolling_ols_hedge(log_eth, log_btc, window=HEDGE_WINDOW)
-
-    print("Computing spread & z-score…")
-    spread = compute_spread(log_eth, log_btc, hedge_window=HEDGE_WINDOW)
+    print("Computing z-score…")
     zscore = rolling_zscore(spread, window=SPREAD_WINDOW)
 
     print("Computing rolling ADF…")
@@ -94,7 +115,7 @@ def run(fetch: bool, testnet: bool) -> None:
     print("Running backtest…")
     trades, equity = run_backtest(
         close_eth, close_btc, spread, zscore, adf_pval,
-        fund_eth, fund_btc, beta, cfg,
+        fund_eth_arr, fund_btc_arr, beta, cfg,
     )
 
     print(f"\n=== In-sample results ({len(trades)} trades) ===")
@@ -103,27 +124,31 @@ def run(fetch: bool, testnet: bool) -> None:
         print(f"  {k}: {v}")
 
     print("\n=== Robustness checks ===")
-
-    args_bt = (close_eth, close_btc, spread, zscore, adf_pval, fund_eth, fund_btc, beta)
+    args_bt = (close_eth, close_btc, spread, zscore, adf_pval, fund_eth_arr, fund_btc_arr, beta)
 
     sf = stress_fees(cfg, *args_bt)
-    print(f"  stress_fees_2x  pass={sf['pass']}  sharpe={sf.get('sharpe', 'n/a'):.2f}")
+    print(f"  stress_fees_2x     PASS={sf['pass']}  sharpe={sf.get('sharpe','n/a')}")
+    if not sf['pass']:
+        print(f"    → {sf.get('failures')}")
 
     oos = out_of_sample(cfg, *args_bt)
-    print(f"  oos_30pct       pass={oos['pass']}  sharpe={oos.get('sharpe', 'n/a'):.2f}")
+    print(f"  oos_30pct          PASS={oos['pass']}  sharpe={oos.get('sharpe','n/a')}")
+    if not oos['pass']:
+        print(f"    → {oos.get('failures')}")
 
     bt_thresh = bootstrap_thresholds(cfg, *args_bt, n_boot=16, delta=0.20)
     pass_thresh = sum(1 for r in bt_thresh if r["pass"])
-    print(f"  thresh_sweep    {pass_thresh}/{len(bt_thresh)} variants pass")
+    print(f"  thresh_sweep       {pass_thresh}/{len(bt_thresh)} variants pass")
 
     shuf = shuffle_test(cfg, *args_bt)
-    print(f"  shuffle_test    null_sharpe_p95={shuf['null_sharpe_p95']:.2f}")
+    print(f"  shuffle_test       null_sharpe_p95={shuf['null_sharpe_p95']}")
 
     rand = random_entry_bench(cfg, *args_bt)
-    print(f"  random_entry    bench_sharpe_p95={rand['bench_sharpe_p95']:.2f}")
+    print(f"  random_entry_bench bench_sharpe_p95={rand['bench_sharpe_p95']}")
 
-    # Final verdict
     real_sharpe = res.get("sharpe", 0.0)
+    boot_lo = res.get("bootstrap_sharpe_ci", (0.0, 0.0))[0]
+
     robust = (
         res["pass"]
         and sf["pass"]
@@ -131,25 +156,32 @@ def run(fetch: bool, testnet: bool) -> None:
         and pass_thresh >= len(bt_thresh) * 0.75
         and real_sharpe > shuf["null_sharpe_p95"]
         and real_sharpe > rand["bench_sharpe_p95"]
+        and boot_lo > 0
     )
 
     verdict = "GO" if robust else "NO-GO"
-    print(f"\n{'='*40}")
+    print(f"\n{'='*42}")
     print(f"  VERDICT: {verdict}")
-    print(f"{'='*40}")
+    print(f"{'='*42}")
+
     if not robust:
+        reasons = []
         if not res["pass"]:
-            print("  Failures:", res.get("failures", []))
+            reasons += res.get("failures", [])
         if not sf["pass"]:
-            print("  Fee stress failed")
+            reasons.append("fee stress failed")
         if not oos["pass"]:
-            print("  OOS failed")
+            reasons.append("OOS failed")
         if pass_thresh < len(bt_thresh) * 0.75:
-            print(f"  Threshold sweep: only {pass_thresh}/{len(bt_thresh)} pass")
+            reasons.append(f"threshold sweep: {pass_thresh}/{len(bt_thresh)} pass")
         if real_sharpe <= shuf["null_sharpe_p95"]:
-            print(f"  Sharpe below shuffle null distribution")
+            reasons.append(f"sharpe={real_sharpe} ≤ shuffle null p95={shuf['null_sharpe_p95']}")
         if real_sharpe <= rand["bench_sharpe_p95"]:
-            print(f"  Sharpe below random entry benchmark")
+            reasons.append(f"sharpe={real_sharpe} ≤ random entry p95={rand['bench_sharpe_p95']}")
+        if boot_lo <= 0:
+            reasons.append(f"bootstrap CI lower bound={boot_lo} ≤ 0")
+        for r in reasons:
+            print(f"  ✗ {r}")
 
 
 if __name__ == "__main__":

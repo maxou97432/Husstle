@@ -1,4 +1,5 @@
 import duckdb
+import polars as pl
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent.parent / "statarb.duckdb"
@@ -59,18 +60,19 @@ def upsert_funding(conn: duckdb.DuckDBPyConnection, rows: list[dict]) -> None:
     )
 
 
-def load_candles(conn: duckdb.DuckDBPyConnection, coin: str) -> list[dict]:
-    rows = conn.execute(
+def load_candles_pl(conn: duckdb.DuckDBPyConnection, coin: str) -> pl.LazyFrame:
+    """Return a Polars LazyFrame of candles for `coin`, ordered by ts."""
+    arrow = conn.execute(
         "SELECT ts, open, high, low, close, volume FROM candles WHERE coin=? ORDER BY ts",
         [coin],
-    ).fetchall()
-    cols = ["ts", "open", "high", "low", "close", "volume"]
-    return [dict(zip(cols, r)) for r in rows]
+    ).arrow()
+    return pl.from_arrow(arrow).lazy()
 
 
-def load_funding(conn: duckdb.DuckDBPyConnection, coin: str) -> list[dict]:
-    rows = conn.execute(
+def load_funding_pl(conn: duckdb.DuckDBPyConnection, coin: str) -> pl.LazyFrame:
+    """Return a Polars LazyFrame of funding rates for `coin`, ordered by ts."""
+    arrow = conn.execute(
         "SELECT ts, rate FROM funding WHERE coin=? ORDER BY ts",
         [coin],
-    ).fetchall()
-    return [{"ts": r[0], "rate": r[1]} for r in rows]
+    ).arrow()
+    return pl.from_arrow(arrow).lazy()

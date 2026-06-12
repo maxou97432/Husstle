@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy import stats
 from backtest.engine import Trade
-
 
 ANNUAL_BARS_4H = 365 * 6  # 4h candles per year
 
@@ -35,57 +33,74 @@ def profit_factor(trades: list[Trade]) -> float:
     return gross_win / gross_loss
 
 
-def bootstrap_ci(
-    trades: list[Trade],
-    stat_fn,
+def breakeven_win_rate(trades: list[Trade]) -> float:
+    """
+    Minimum win rate to break even given the average win/loss sizes.
+    BEWR = avg_loss / (avg_win + avg_loss)
+    """
+    winners = [t.pnl for t in trades if t.pnl > 0]
+    losers = [abs(t.pnl) for t in trades if t.pnl < 0]
+    if not winners or not losers:
+        return float("nan")
+    avg_win = float(np.mean(winners))
+    avg_loss = float(np.mean(losers))
+    return avg_loss / (avg_win + avg_loss)
+
+
+def bootstrap_sharpe_ci(
+    equity: np.ndarray,
     n_boot: int = 1000,
     ci: float = 0.95,
 ) -> tuple[float, float]:
-    pnls = np.array([t.pnl for t in trades])
-    if len(pnls) == 0:
+    """
+    Bootstrap CI on the annualised Sharpe by resampling returns.
+    Decision is based on the lower CI bound (§6 of brief).
+    """
+    returns = np.diff(equity)
+    if len(returns) < 2:
         return (0.0, 0.0)
-    samples = np.random.choice(pnls, size=(n_boot, len(pnls)), replace=True)
-    stats_boot = np.array([stat_fn(s) for s in samples])
-    lo = np.percentile(stats_boot, (1 - ci) / 2 * 100)
-    hi = np.percentile(stats_boot, (1 + ci) / 2 * 100)
-    return (float(lo), float(hi))
-
-
-def _mean(arr: np.ndarray) -> float:
-    return float(arr.mean())
+    boot_sharpes = []
+    for _ in range(n_boot):
+        sample = np.random.choice(returns, size=len(returns), replace=True)
+        std = sample.std()
+        if std == 0:
+            boot_sharpes.append(0.0)
+            continue
+        boot_sharpes.append(float(sample.mean() / std * np.sqrt(ANNUAL_BARS_4H)))
+    lo = float(np.percentile(boot_sharpes, (1 - ci) / 2 * 100))
+    hi = float(np.percentile(boot_sharpes, (1 + ci) / 2 * 100))
+    return lo, hi
 
 
 GATES = {
     "min_trades": 30,
     "min_sharpe": 0.5,
-    "max_drawdown_pct": -0.20,   # relative to peak equity (if equity is %-based)
     "min_win_rate": 0.45,
     "min_profit_factor": 1.1,
-    "bootstrap_sharpe_lo": 0.0,  # lower CI bound must be > 0
+    "bootstrap_sharpe_lo": 0.0,   # lower CI bound must exceed 0
+    "max_bewr_margin": 0.05,       # actual win_rate > bewr + this margin
 }
 
 
-def evaluate(
-    trades: list[Trade],
-    equity: np.ndarray,
-) -> dict:
+def evaluate(trades: list[Trade], equity: np.ndarray) -> dict:
     if not trades:
-        return {"pass": False, "reason": "no trades"}
+        return {"pass": False, "failures": ["no trades"]}
 
     s = sharpe(equity)
     mdd = max_drawdown(equity)
     wr = win_rate(trades)
     pf = profit_factor(trades)
-    pnls = np.array([t.pnl for t in trades])
-    boot_lo, boot_hi = bootstrap_ci(trades, _mean)
+    bewr = breakeven_win_rate(trades)
+    boot_lo, boot_hi = bootstrap_sharpe_ci(equity)
 
     results = {
         "n_trades": len(trades),
-        "sharpe": s,
-        "max_drawdown": mdd,
-        "win_rate": wr,
-        "profit_factor": pf,
-        "bootstrap_mean_ci": (boot_lo, boot_hi),
+        "sharpe": round(s, 3),
+        "max_drawdown": round(mdd, 4),
+        "win_rate": round(wr, 3),
+        "profit_factor": round(pf, 3),
+        "breakeven_win_rate": round(bewr, 3) if not np.isnan(bewr) else None,
+        "bootstrap_sharpe_ci": (round(boot_lo, 3), round(boot_hi, 3)),
     }
 
     failures = []
@@ -98,7 +113,9 @@ def evaluate(
     if pf < GATES["min_profit_factor"]:
         failures.append(f"profit_factor={pf:.2f} < {GATES['min_profit_factor']}")
     if boot_lo < GATES["bootstrap_sharpe_lo"]:
-        failures.append(f"bootstrap_ci_lo={boot_lo:.4f} < 0")
+        failures.append(f"bootstrap_sharpe_lo={boot_lo:.3f} < 0")
+    if not np.isnan(bewr) and wr < bewr + GATES["max_bewr_margin"]:
+        failures.append(f"win_rate={wr:.2%} not > breakeven={bewr:.2%} + margin")
 
     results["pass"] = len(failures) == 0
     results["failures"] = failures

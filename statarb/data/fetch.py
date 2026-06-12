@@ -6,8 +6,8 @@ HL_REST = "https://api.hyperliquid.xyz/info"
 INTERVAL = "4h"
 INTERVAL_MS = 4 * 3600 * 1000
 FUNDING_INTERVAL_MS = 3600 * 1000
-MAX_CANDLES_PER_PAGE = 500
-MAX_FUNDING_PER_PAGE = 500
+MAX_CANDLES_PER_PAGE = 5000
+MAX_FUNDING_PER_PAGE = 5000
 
 
 def _post(client: httpx.Client, payload: dict, retries: int = 5) -> dict:
@@ -17,11 +17,12 @@ def _post(client: httpx.Client, payload: dict, retries: int = 5) -> dict:
             r = client.post(HL_REST, json=payload, timeout=20)
             r.raise_for_status()
             return r.json()
-        except (httpx.HTTPError, Exception) as exc:
+        except (httpx.HTTPError, Exception):
             if attempt == retries - 1:
                 raise
             time.sleep(delay)
             delay *= 2
+    return {}
 
 
 def fetch_candles(coin: str, start_ms: int, end_ms: int, conn=None) -> list[dict]:
@@ -63,17 +64,19 @@ def fetch_candles(coin: str, start_ms: int, end_ms: int, conn=None) -> list[dict
 
 
 def fetch_funding(coin: str, start_ms: int, end_ms: int, conn=None) -> list[dict]:
+    """
+    fundingHistory endpoint — no 'req' wrapper, coin at top level.
+    """
     rows: list[dict] = []
     cursor = start_ms
     with httpx.Client() as client:
         while cursor < end_ms:
+            page_end = min(cursor + MAX_FUNDING_PER_PAGE * FUNDING_INTERVAL_MS, end_ms)
             payload = {
                 "type": "fundingHistory",
-                "req": {
-                    "coin": coin,
-                    "startTime": cursor,
-                    "endTime": min(cursor + MAX_FUNDING_PER_PAGE * FUNDING_INTERVAL_MS, end_ms),
-                },
+                "coin": coin,
+                "startTime": cursor,
+                "endTime": page_end,
             }
             data = _post(client, payload)
             if not data:
@@ -95,7 +98,7 @@ def fetch_funding(coin: str, start_ms: int, end_ms: int, conn=None) -> list[dict
     return rows
 
 
-def fetch_all(coins: list[str], lookback_days: int = 365, testnet: bool = False) -> None:
+def fetch_all(coins: list[str], lookback_days: int = 730, testnet: bool = False) -> None:
     global HL_REST
     if testnet:
         HL_REST = "https://api.hyperliquid-testnet.xyz/info"
