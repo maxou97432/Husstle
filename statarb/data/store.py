@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import duckdb
 import polars as pl
 from pathlib import Path
@@ -62,17 +64,21 @@ def upsert_funding(conn: duckdb.DuckDBPyConnection, rows: list[dict]) -> None:
 
 def load_candles_pl(conn: duckdb.DuckDBPyConnection, coin: str) -> pl.LazyFrame:
     """Return a Polars LazyFrame of candles for `coin`, ordered by ts."""
-    arrow = conn.execute(
+    cols = ["ts", "open", "high", "low", "close", "volume"]
+    rows = conn.execute(
         "SELECT ts, open, high, low, close, volume FROM candles WHERE coin=? ORDER BY ts",
         [coin],
-    ).arrow()
-    return pl.from_arrow(arrow).lazy()
+    ).fetchall()
+    data = {c: [r[i] for r in rows] for i, c in enumerate(cols)}
+    return pl.DataFrame(data).lazy()
 
 
 def load_funding_pl(conn: duckdb.DuckDBPyConnection, coin: str) -> pl.LazyFrame:
     """Return a Polars LazyFrame of funding rates for `coin`, ordered by ts."""
-    arrow = conn.execute(
+    cols = ["ts", "rate"]
+    rows = conn.execute(
         "SELECT ts, rate FROM funding WHERE coin=? ORDER BY ts",
         [coin],
-    ).arrow()
-    return pl.from_arrow(arrow).lazy()
+    ).fetchall()
+    data = {c: [r[i] for r in rows] for i, c in enumerate(cols)}
+    return pl.DataFrame(data).lazy()

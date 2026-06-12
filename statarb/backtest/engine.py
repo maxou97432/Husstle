@@ -40,10 +40,15 @@ class Trade:
     fees_paid: float = 0.0
 
 
-def _fee(cfg: BacktestConfig, price_y: float, price_x: float, beta: float, taker: bool) -> float:
+def _fee(cfg: BacktestConfig, beta: float, taker: bool) -> float:
+    """
+    Fee as a FRACTION of capital, commensurable with the log-return PnL.
+    Turnover per side = y-leg notional (1) + x-leg notional (|beta|), levered.
+    Prices must NOT appear here: PnL is measured in spread (log-return) units,
+    so fees are measured on the same fractional notional.
+    """
     rate = cfg.fee_taker if taker else cfg.fee_maker
-    # fees on both legs, levered notional
-    return (rate + cfg.slippage) * cfg.fee_stress * cfg.leverage * (abs(price_y) + abs(beta * price_x))
+    return (rate + cfg.slippage) * cfg.fee_stress * cfg.leverage * (1.0 + abs(beta))
 
 
 def run_backtest(
@@ -56,12 +61,18 @@ def run_backtest(
     funding_x: np.ndarray | None,
     hedge_beta: np.ndarray,
     cfg: BacktestConfig | None = None,
+    forced_entry: np.ndarray | None = None,
 ) -> tuple[list[Trade], np.ndarray]:
     """
     Signal at close[i] → execution at open[i+1].
     PnL = direction * Δspread * leverage (log-spread ≈ % return, levered).
     Funding applied per bar held, on both legs, realised rate.
     Maker fees for normal entry/exit; taker for stop & kill-switch.
+
+    forced_entry: optional array. When provided, the *entry* decision uses
+    forced_entry[i] (+1/-1 to open, 0/NaN to stay flat) instead of the z/ADF
+    rule — but exits, sizing, funding and fees are unchanged. Used by the
+    random-entry benchmark to isolate fill/funding/fee bias.
     Returns (trades, equity_curve).
     """
     if cfg is None:
@@ -83,8 +94,6 @@ def run_backtest(
             continue
 
         exec_bar = i + 1
-        py = close_y[exec_bar]
-        px = close_x[exec_bar]
 
         # ── Handle open position ──────────────────────────────────────────
         if position is not None:
@@ -105,7 +114,7 @@ def run_backtest(
                 is_urgent = reason in (ExitReason.STOP, ExitReason.KILL_SWITCH)
                 position.exit_bar = exec_bar
                 position.exit_spread = spread[exec_bar]
-                position.fees_paid += _fee(cfg, py, px, beta, taker=is_urgent)
+                position.fees_paid += _fee(cfg, beta, taker=is_urgent)
                 raw_pnl = position.direction * (position.exit_spread - position.entry_spread) * cfg.leverage
                 position.pnl = raw_pnl - position.fees_paid - position.funding_paid
                 position.exit_reason = reason
@@ -118,30 +127,40 @@ def run_backtest(
                 if funding_y is not None and funding_x is not None:
                     fy = funding_y[i] if i < len(funding_y) else 0.0
                     fx = funding_x[i] if i < len(funding_x) else 0.0
-                    # long spread: long y, short x → pay fy, receive fx (sign depends on direction)
-                    net = position.direction * (fy * close_y[i] - fx * close_x[i] * beta) * cfg.leverage
+                    # Funding as a FRACTION of notional (no price): long-y pays fy on
+                    # notional 1, short-x pays -fx on notional |beta|. Sign by direction.
+                    net = position.direction * (fy * 1.0 - fx * beta) * cfg.leverage
                     position.funding_paid += net  # positive = cost to position
 
             equity[i] = cumulative_pnl
             continue
 
         # ── Open new position ─────────────────────────────────────────────
-        cointegrated = (not np.isnan(p)) and (p < cfg.adf_entry_max)
-        if cointegrated and not np.isnan(z):
-            direction = None
-            if z < -cfg.entry_z:
-                direction = +1   # long spread
-            elif z > cfg.entry_z:
-                direction = -1   # short spread
+        direction = None
+        if forced_entry is not None:
+            fe = forced_entry[i]
+            if fe == 1:
+                direction = +1
+            elif fe == -1:
+                direction = -1
+        else:
+            cointegrated = (not np.isnan(p)) and (p < cfg.adf_entry_max)
+            if cointegrated and not np.isnan(z):
+                if z < -cfg.entry_z:
+                    direction = +1   # long spread
+                elif z > cfg.entry_z:
+                    direction = -1   # short spread
 
-            if direction is not None:
-                position = Trade(
-                    entry_bar=exec_bar,
-                    direction=direction,
-                    entry_spread=spread[exec_bar],
-                )
-                position.fees_paid = _fee(cfg, py, px, beta, taker=False)
+        if direction is not None and not np.isnan(spread[exec_bar]):
+            position = Trade(
+                entry_bar=exec_bar,
+                direction=direction,
+                entry_spread=spread[exec_bar],
+            )
+            position.fees_paid = _fee(cfg, beta, taker=False)
 
         equity[i] = cumulative_pnl
 
+    # Carry final realised PnL onto the last bar (loop stops at n-2).
+    equity[-1] = cumulative_pnl
     return trades, equity
