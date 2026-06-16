@@ -14,11 +14,9 @@ import polars as pl
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from config import HEDGE_WINDOW, Z_WINDOW as SPREAD_WINDOW, ADF_WINDOW, ADF_STEP, INTERVAL_MS, LOOKBACK_DAYS_DEFAULT
+
 COINS = ["BTC", "ETH"]
-HEDGE_WINDOW = 240
-SPREAD_WINDOW = 60
-ADF_WINDOW = 240
-ADF_STEP = 6
 
 
 def _align_and_aggregate(
@@ -44,7 +42,7 @@ def _align_and_aggregate(
         f_ts = fund["ts"].to_numpy()
         f_rate = fund["rate"].to_numpy()
         agg = np.zeros(len(ts_arr), dtype=np.float64)
-        interval_ms = 4 * 3600 * 1000
+        interval_ms = INTERVAL_MS
         for i, ts in enumerate(ts_arr):
             mask = (f_ts > ts - interval_ms) & (f_ts <= ts)
             agg[i] = f_rate[mask].sum() if mask.any() else 0.0
@@ -76,7 +74,7 @@ def run(fetch: bool, testnet: bool) -> None:
 
     if fetch:
         print("=== Fetching data from Hyperliquid ===")
-        fetch_all(COINS, lookback_days=730, testnet=testnet)
+        fetch_all(COINS, lookback_days=LOOKBACK_DAYS_DEFAULT, testnet=testnet)
 
     conn = get_conn()
     candles_btc = load_candles_pl(conn, "BTC")

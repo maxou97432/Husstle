@@ -26,11 +26,7 @@ from backtest.engine import BacktestConfig, run_backtest
 from backtest.metrics import sharpe
 from tests._data import get_data
 from tests import test_causality
-
-HEDGE_W = 240
-Z_W = 60
-ADF_W = 240
-ADF_STEP = 6
+from config import HEDGE_WINDOW as HEDGE_W, Z_WINDOW as Z_W, ADF_WINDOW as ADF_W, ADF_STEP, BARS_PER_YEAR, INTERVAL
 
 
 def build_signals(close_eth, close_btc):
@@ -46,7 +42,7 @@ def edge_of(close_eth, close_btc, spread, z, adf, fund_eth, fund_btc, beta, cfg,
     trades, equity = run_backtest(
         close_eth, close_btc, spread, z, adf, fund_eth, fund_btc, beta, cfg, forced_entry=forced
     )
-    return sharpe(equity), float(equity[-1]), len(trades)
+    return sharpe(equity, bars_per_year=BARS_PER_YEAR), float(equity[-1]), len(trades)
 
 
 def _pct(arr, q):
@@ -191,7 +187,8 @@ def main():
     data, source = get_data(prefer_real=not args.synthetic)
     cfg = BacktestConfig()
 
-    print(f"\nData source: {source}\n")
+    print(f"\nTimeframe: {INTERVAL}  (windows: hedge={HEDGE_W} z={Z_W} adf={ADF_W} step={ADF_STEP} bars/yr={BARS_PER_YEAR})")
+    print(f"Data source: {source}\n")
 
     t1 = test_causality.run()
     print()

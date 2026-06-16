@@ -20,11 +20,7 @@ from signal.cointegration import rolling_adf_pvalue
 from backtest.engine import BacktestConfig, run_backtest
 from backtest.metrics import sharpe, win_rate, profit_factor
 from tests._data import get_data
-
-HEDGE_W = 240
-Z_W = 60
-ADF_W = 240
-ADF_STEP = 6
+from config import HEDGE_WINDOW as HEDGE_W, Z_WINDOW as Z_W, ADF_WINDOW as ADF_W, ADF_STEP, BARS_PER_YEAR, INTERVAL
 
 ENTRY_GRID = [1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50]
 EXIT_GRID  = [0.00, 0.25, 0.50, 0.75]
@@ -39,6 +35,7 @@ def _f(x, w=7, d=2):
 
 def main() -> None:
     data, source = get_data(prefer_real=True)
+    print(f"Timeframe: {INTERVAL}  (hedge={HEDGE_W} z={Z_W} adf={ADF_W} step={ADF_STEP} bars/yr={BARS_PER_YEAR})")
     print(f"Data source: {source}\n")
     close_eth, close_btc, fund_eth, fund_btc = data
 
@@ -66,7 +63,7 @@ def main() -> None:
             M_trades[i, j] = len(trades)
             if len(trades) == 0:
                 continue
-            M_sharpe[i, j] = sharpe(equity)
+            M_sharpe[i, j] = sharpe(equity, bars_per_year=BARS_PER_YEAR)
             M_wr[i, j]     = win_rate(trades)
             M_pf[i, j]     = profit_factor(trades)
             M_pnl[i, j]    = float(equity[-1])

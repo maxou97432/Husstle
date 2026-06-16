@@ -1,10 +1,9 @@
 import time
 import httpx
 from data.store import get_conn, upsert_candles, upsert_funding
+from config import INTERVAL, INTERVAL_MS, LOOKBACK_DAYS_DEFAULT
 
 HL_REST = "https://api.hyperliquid.xyz/info"
-INTERVAL = "4h"
-INTERVAL_MS = 4 * 3600 * 1000
 FUNDING_INTERVAL_MS = 3600 * 1000
 MAX_CANDLES_PER_PAGE = 5000
 MAX_FUNDING_PER_PAGE = 5000
@@ -26,23 +25,37 @@ def _post(client: httpx.Client, payload: dict, retries: int = 5) -> dict:
 
 
 def fetch_candles(coin: str, start_ms: int, end_ms: int, conn=None) -> list[dict]:
+    """
+    Fixed-step pagination forward. Each page covers MAX_CANDLES_PER_PAGE bars
+    of calendar time. We advance by that span regardless of response size, so
+    pre-listing empty pages don't abort the fetch and SSL hiccups don't cause
+    silent gaps. PK ON CONFLICT DO NOTHING handles overlap.
+    """
     rows: list[dict] = []
-    cursor = start_ms
+    page_span = MAX_CANDLES_PER_PAGE * INTERVAL_MS
+    n_pages = max(1, (end_ms - start_ms + page_span - 1) // page_span)
     with httpx.Client() as client:
-        while cursor < end_ms:
+        for page in range(n_pages):
+            cursor = start_ms + page * page_span
+            if cursor >= end_ms:
+                break
+            page_end = min(cursor + page_span, end_ms)
             payload = {
                 "type": "candleSnapshot",
                 "req": {
                     "coin": coin,
                     "interval": INTERVAL,
                     "startTime": cursor,
-                    "endTime": min(cursor + MAX_CANDLES_PER_PAGE * INTERVAL_MS, end_ms),
+                    "endTime": page_end,
                 },
             }
-            data = _post(client, payload)
-            if not data:
-                break
-            for c in data:
+            try:
+                data = _post(client, payload)
+            except Exception as exc:
+                print(f"  page {page}/{n_pages-1} ERROR {type(exc).__name__}, continuing")
+                time.sleep(2.0)
+                continue
+            for c in data or []:
                 rows.append({
                     "coin": coin,
                     "ts": int(c["t"]),
@@ -52,11 +65,10 @@ def fetch_candles(coin: str, start_ms: int, end_ms: int, conn=None) -> list[dict
                     "close": float(c["c"]),
                     "volume": float(c["v"]),
                 })
-            last_ts = int(data[-1]["t"])
-            if last_ts <= cursor:
-                break
-            cursor = last_ts + INTERVAL_MS
-            time.sleep(0.1)
+            if data:
+                print(f"  page {page}/{n_pages-1}: +{len(data):>5d} candles "
+                      f"({(end_ms-cursor)/86400000:.0f}d ago → {(end_ms-page_end)/86400000:.0f}d ago)")
+            time.sleep(0.15)
 
     if conn is not None:
         upsert_candles(conn, rows)
@@ -98,7 +110,7 @@ def fetch_funding(coin: str, start_ms: int, end_ms: int, conn=None) -> list[dict
     return rows
 
 
-def fetch_all(coins: list[str], lookback_days: int = 730, testnet: bool = False) -> None:
+def fetch_all(coins: list[str], lookback_days: int = LOOKBACK_DAYS_DEFAULT, testnet: bool = False) -> None:
     global HL_REST
     if testnet:
         HL_REST = "https://api.hyperliquid-testnet.xyz/info"

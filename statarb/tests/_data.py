@@ -53,15 +53,16 @@ def load_real() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
     close_btc = np.array([btc_map[t] for t in common])
     close_eth = np.array([eth_map[t] for t in common])
 
+    from config import INTERVAL_MS
+
     def agg(fmap):
         if not fmap:
             return np.zeros(len(ts))
         f_ts = np.array(sorted(fmap), dtype=np.int64)
         f_rate = np.array([fmap[t] for t in sorted(fmap)])
         out = np.zeros(len(ts))
-        iv = 4 * 3600 * 1000
         for i, t in enumerate(ts):
-            m = (f_ts > t - iv) & (f_ts <= t)
+            m = (f_ts > t - INTERVAL_MS) & (f_ts <= t)
             out[i] = f_rate[m].sum() if m.any() else 0.0
         return out
 
