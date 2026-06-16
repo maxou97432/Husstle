@@ -24,3 +24,7 @@ ADF_WINDOW   = 40 * BARS_PER_DAY   # ~40d
 ADF_STEP     = 1  * BARS_PER_DAY   # ~1d
 
 LOOKBACK_DAYS_DEFAULT = 730        # 2 years
+
+# Multi-pair StatArb universe (probed liquid on HL with 1h history).
+# 6 assets -> 15 unordered pairs. Mix L1 cores + L2 + memecoin for diversity.
+UNIVERSE = ["BTC", "ETH", "SOL", "ARB", "AVAX", "BNB"]
