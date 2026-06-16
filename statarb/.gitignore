@@ -3,3 +3,4 @@
 __pycache__/
 *.pyc
 live_journal.jsonl
+live_bot.out

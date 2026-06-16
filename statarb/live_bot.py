@@ -21,6 +21,11 @@ import time
 import argparse
 import logging
 import numpy as np
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env from statarb/ directory
+load_dotenv(Path(__file__).parent / ".env")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -94,6 +99,8 @@ def main():
     ap.add_argument("--exit",  type=float, default=0.5)
     ap.add_argument("--stop",  type=float, default=3.5)
     ap.add_argument("--capital", type=float, default=100.0)
+    ap.add_argument("--safety-stop-pct", type=float, default=0.05,
+                    help="Native HL stop-market loss % per leg (survives bot offline). Default 5%.")
     args = ap.parse_args()
 
     cfg = BacktestConfig(entry_z=args.entry, exit_z=args.exit, stop_z=args.stop, leverage=2.0)
@@ -101,7 +108,19 @@ def main():
     sg = Safeguards(max_open_pairs=1)
     cb = CircuitBreaker(sg)
 
-    client = HLClient(network="testnet", dry_run=True if args.dry_run else None)
+    # Robust client init — LibreSSL on macOS is flaky for the SDK's spotMeta call
+    client = None
+    for attempt in range(10):
+        try:
+            client = HLClient(network="testnet", dry_run=True if args.dry_run else None)
+            break
+        except Exception as exc:
+            log.warning(f"HLClient init failed attempt {attempt+1}/10: {exc}")
+            time.sleep(min(5 * (attempt + 1), 60))
+    if client is None:
+        notify("error", stage="client_init", exc="failed after 10 attempts")
+        sys.exit(1)
+
     notify("bot_start", network=client.network, dry_run=client.dry_run,
            entry=cfg.entry_z, exit=cfg.exit_z, stop=cfg.stop_z, capital=risk.capital_per_trade_usd)
 
@@ -138,6 +157,14 @@ def main():
 
             if kill or stop or sig_exit:
                 reason = "kill_switch" if kill else "stop" if stop else "signal"
+                # Cancel the resting safety stops BEFORE the close, so they don't
+                # collide with the close orders.
+                for coin, oid in (
+                    (PAIR_Y, open_position.get("stop_y_oid")),
+                    (PAIR_X, open_position.get("stop_x_oid")),
+                ):
+                    if oid:
+                        client.cancel(coin, oid)
                 bid_y, ask_y = client.book_top(PAIR_Y)
                 bid_x, ask_x = client.book_top(PAIR_X)
                 # Reverse the legs to close
@@ -191,14 +218,18 @@ def main():
             PAIR_Y, is_buy_y, sz_y, px_y,
             PAIR_X, is_buy_x, sz_x, px_x,
             max_lag_sec=sg.max_one_leg_lag_sec, reduce_only=False,
+            stop_loss_pct=args.safety_stop_pct,
         )
-        notify("entry", direction=direction, ok=res.ok, sz_y=sz_y, sz_x=sz_x, **sig)
+        notify("entry", direction=direction, ok=res.ok, sz_y=sz_y, sz_x=sz_x,
+               stop_y_oid=res.stop_y_oid, stop_x_oid=res.stop_x_oid, **sig)
         if res.ok:
             open_position = {
                 "direction": direction,
                 "sz_y": sz_y, "sz_x": sz_x,
                 "entry_spread": sig["spread"],
                 "entry_z": sig["z"],
+                "stop_y_oid": res.stop_y_oid,
+                "stop_x_oid": res.stop_x_oid,
             }
 
     if args.once:

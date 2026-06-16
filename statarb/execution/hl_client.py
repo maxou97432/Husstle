@@ -25,7 +25,7 @@ from hyperliquid.utils import constants
 logger = logging.getLogger("statarb.hl_client")
 
 
-def _retry(fn, attempts: int = 4, base_delay: float = 0.5):
+def _retry(fn, attempts: int = 8, base_delay: float = 0.5):
     """Retry transient SSL/network errors. LibreSSL on macOS is flaky."""
     delay = base_delay
     last_exc = None
@@ -35,12 +35,13 @@ def _retry(fn, attempts: int = 4, base_delay: float = 0.5):
         except Exception as exc:
             msg = str(exc).lower()
             transient = ("ssl" in msg or "timeout" in msg or "connection" in msg
-                         or "decryption" in msg or "read" in msg)
+                         or "decryption" in msg or "read" in msg or "max retries" in msg)
             if not transient or i == attempts - 1:
                 raise
             last_exc = exc
+            logger.warning(f"transient error attempt {i+1}/{attempts}: {type(exc).__name__}")
             time.sleep(delay)
-            delay *= 2
+            delay = min(delay * 2, 30.0)
     raise last_exc  # unreachable
 
 
@@ -166,6 +167,41 @@ class HLClient:
                 f = status["filled"]
                 return OrderResult(ok=True, filled_sz=float(f["totalSz"]), filled_px=float(f["avgPx"]),
                                    oid=int(f.get("oid", 0)), raw=res)
+            if "resting" in status:
+                return OrderResult(ok=True, oid=int(status["resting"]["oid"]), raw=res)
+            if "error" in status:
+                return OrderResult(ok=False, error=status["error"], raw=res)
+            return OrderResult(ok=True, raw=res)
+        except Exception as exc:
+            return OrderResult(ok=False, error=str(exc))
+
+    def place_stop_market(
+        self,
+        coin: str,
+        is_buy: bool,
+        sz: float,
+        trigger_px: float,
+    ) -> OrderResult:
+        """
+        Native HL stop-market order. Activates when price crosses trigger_px,
+        then executes as a market order. Survives the bot being offline.
+        reduce_only=True so it only closes existing positions.
+        """
+        side = "BUY" if is_buy else "SELL"
+        if self.dry_run:
+            logger.info(f"[DRY] STOP-MARKET {side} {sz} {coin} trigger@{trigger_px}")
+            return OrderResult(ok=True, filled_px=trigger_px)
+        try:
+            order_type = {
+                "trigger": {
+                    "isMarket": True,
+                    "triggerPx": str(trigger_px),
+                    "tpsl": "sl",
+                }
+            }
+            # Limit price for market-on-trigger: use trigger as the placeholder.
+            res = self.exchange.order(coin, is_buy, sz, trigger_px, order_type, reduce_only=True)
+            status = res.get("response", {}).get("data", {}).get("statuses", [{}])[0]
             if "resting" in status:
                 return OrderResult(ok=True, oid=int(status["resting"]["oid"]), raw=res)
             if "error" in status:

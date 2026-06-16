@@ -28,6 +28,8 @@ class TwoLegFill:
     leg_y: OrderResult = field(default_factory=lambda: OrderResult(ok=False))
     leg_x: OrderResult = field(default_factory=lambda: OrderResult(ok=False))
     reason: str = ""
+    stop_y_oid: int | None = None    # native HL stop-loss order IDs (resting)
+    stop_x_oid: int | None = None
 
 
 def place_two_legs(
@@ -36,6 +38,7 @@ def place_two_legs(
     coin_x: str, is_buy_x: bool, sz_x: float, px_x: float,
     max_lag_sec: int = 5,
     reduce_only: bool = False,
+    stop_loss_pct: float | None = None,
 ) -> TwoLegFill:
     """
     Place both legs as maker limits, monitor fills, force-close the orphan leg
@@ -52,13 +55,31 @@ def place_two_legs(
     if not r_y.ok and not r_x.ok:
         return TwoLegFill(ok=False, leg_y=r_y, leg_x=r_x, reason="both legs failed to place")
 
+    def _place_safety_stops(result: TwoLegFill) -> TwoLegFill:
+        """After successful entry, place native HL stop-market on each leg as a survival net."""
+        if reduce_only or stop_loss_pct is None or stop_loss_pct <= 0:
+            return result
+        # On a LONG (is_buy=True), stop triggers BELOW entry — sell-stop.
+        # On a SHORT (is_buy=False), stop triggers ABOVE entry — buy-stop.
+        trig_y = px_y * (1 - stop_loss_pct) if is_buy_y else px_y * (1 + stop_loss_pct)
+        trig_x = px_x * (1 - stop_loss_pct) if is_buy_x else px_x * (1 + stop_loss_pct)
+        s_y = client.place_stop_market(coin_y, is_buy=not is_buy_y, sz=sz_y, trigger_px=round(trig_y, 5))
+        s_x = client.place_stop_market(coin_x, is_buy=not is_buy_x, sz=sz_x, trigger_px=round(trig_x, 5))
+        notify("safety_stops",
+               leg_y=coin_y, trig_y=trig_y, ok_y=s_y.ok, oid_y=s_y.oid,
+               leg_x=coin_x, trig_x=trig_x, ok_x=s_x.ok, oid_x=s_x.oid)
+        result.stop_y_oid = s_y.oid
+        result.stop_x_oid = s_x.oid
+        return result
+
     deadline = time.time() + max_lag_sec
     while time.time() < deadline:
         if r_y.filled_sz > 0 and r_x.filled_sz > 0:
-            return TwoLegFill(ok=True, leg_y=r_y, leg_x=r_x)
+            return _place_safety_stops(TwoLegFill(ok=True, leg_y=r_y, leg_x=r_x))
         # In dry-run, partial-fill checking isn't meaningful (sizes start at 0).
         if client.dry_run:
-            return TwoLegFill(ok=True, leg_y=r_y, leg_x=r_x, reason="dry-run (assumed both filled)")
+            return _place_safety_stops(TwoLegFill(ok=True, leg_y=r_y, leg_x=r_x,
+                                                   reason="dry-run (assumed both filled)"))
         time.sleep(0.5)
         # Refresh fill state would normally poll order status; SDK fills update on poll.
 
