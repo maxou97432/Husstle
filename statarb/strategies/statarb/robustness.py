@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import copy
 import numpy as np
-from backtest.engine import BacktestConfig, run_backtest
-from backtest.metrics import evaluate, sharpe
+from core.backtest.engine import BacktestConfig, run_backtest
+from core.backtest.metrics import evaluate, sharpe
 
 
 def stress_fees(

@@ -27,16 +27,14 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import (
-    UNIVERSE, HEDGE_WINDOW, Z_WINDOW, ADF_WINDOW, ADF_STEP,
-    BARS_PER_YEAR, INTERVAL, INTERVAL_MS,
-)
-from data.store import get_conn, load_candles_pl, load_funding_pl
-from signal.spread import compute_spread, rolling_zscore
-from signal.cointegration import rolling_adf_pvalue
+from strategies.statarb.config import UNIVERSE, HEDGE_WINDOW, Z_WINDOW, ADF_WINDOW, ADF_STEP
+from core.config import BARS_PER_YEAR, INTERVAL, INTERVAL_MS
+from core.data.store import get_conn, load_candles_pl, load_funding_pl
+from strategies.statarb.spread import compute_spread, rolling_zscore
+from strategies.statarb.cointegration import rolling_adf_pvalue
 from statsmodels.tsa.stattools import adfuller
-from backtest.engine import BacktestConfig, run_backtest
-from backtest.metrics import (
+from core.backtest.engine import BacktestConfig, run_backtest
+from core.backtest.metrics import (
     sharpe, max_drawdown, win_rate, profit_factor, bootstrap_sharpe_ci,
 )
 

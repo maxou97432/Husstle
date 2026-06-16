@@ -19,9 +19,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from signal.hedge import rolling_ols_hedge
-from signal.spread import compute_spread, rolling_zscore
-from signal.cointegration import rolling_adf_pvalue
+from strategies.statarb.hedge import rolling_ols_hedge
+from strategies.statarb.spread import compute_spread, rolling_zscore
+from strategies.statarb.cointegration import rolling_adf_pvalue
 
 HEDGE_W = 240
 Z_W = 60

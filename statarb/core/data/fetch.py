@@ -1,7 +1,7 @@
 import time
 import httpx
-from data.store import get_conn, upsert_candles, upsert_funding
-from config import INTERVAL, INTERVAL_MS, LOOKBACK_DAYS_DEFAULT
+from core.data.store import get_conn, upsert_candles, upsert_funding
+from core.config import INTERVAL, INTERVAL_MS, LOOKBACK_DAYS_DEFAULT
 
 HL_REST = "https://api.hyperliquid.xyz/info"
 FUNDING_INTERVAL_MS = 3600 * 1000

@@ -14,7 +14,8 @@ import polars as pl
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from config import HEDGE_WINDOW, Z_WINDOW as SPREAD_WINDOW, ADF_WINDOW, ADF_STEP, INTERVAL_MS, LOOKBACK_DAYS_DEFAULT
+from strategies.statarb.config import HEDGE_WINDOW, Z_WINDOW as SPREAD_WINDOW, ADF_WINDOW, ADF_STEP
+from core.config import INTERVAL_MS, LOOKBACK_DAYS_DEFAULT
 
 COINS = ["BTC", "ETH"]
 
@@ -61,13 +62,13 @@ def _align_and_aggregate(
 
 
 def run(fetch: bool, testnet: bool) -> None:
-    from data.store import get_conn, load_candles_pl, load_funding_pl
-    from data.fetch import fetch_all
-    from signal.spread import compute_spread, rolling_zscore
-    from signal.cointegration import rolling_adf_pvalue
-    from backtest.engine import BacktestConfig, run_backtest
-    from backtest.metrics import evaluate
-    from backtest.robustness import (
+    from core.data.store import get_conn, load_candles_pl, load_funding_pl
+    from core.data.fetch import fetch_all
+    from strategies.statarb.spread import compute_spread, rolling_zscore
+    from strategies.statarb.cointegration import rolling_adf_pvalue
+    from core.backtest.engine import BacktestConfig, run_backtest
+    from core.backtest.metrics import evaluate
+    from strategies.statarb.robustness import (
         stress_fees, out_of_sample, bootstrap_thresholds,
         shuffle_test, random_entry_bench,
     )

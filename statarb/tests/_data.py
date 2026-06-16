@@ -21,7 +21,7 @@ def _warn_fallback(reason: str) -> None:
 
 def load_real() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
     try:
-        from data.store import get_conn, load_candles_pl, load_funding_pl
+        from core.data.store import get_conn, load_candles_pl, load_funding_pl
         conn = get_conn()
         btc = load_candles_pl(conn, "BTC").sort("ts").collect()
         eth = load_candles_pl(conn, "ETH").sort("ts").collect()
@@ -53,7 +53,7 @@ def load_real() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
     close_btc = np.array([btc_map[t] for t in common])
     close_eth = np.array([eth_map[t] for t in common])
 
-    from config import INTERVAL_MS
+    from core.config import INTERVAL_MS
 
     def agg(fmap):
         if not fmap:

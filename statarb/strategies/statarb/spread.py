@@ -1,5 +1,5 @@
 import numpy as np
-from signal.hedge import rolling_ols_hedge
+from strategies.statarb.hedge import rolling_ols_hedge
 
 
 def compute_spread(

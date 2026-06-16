@@ -16,8 +16,8 @@ import time
 import logging
 from dataclasses import dataclass, field
 
-from execution.hl_client import HLClient, OrderResult
-from alerts.notify import notify
+from core.execution.hl_client import HLClient, OrderResult
+from core.alerts.notify import notify
 
 logger = logging.getLogger("statarb.orders")
 

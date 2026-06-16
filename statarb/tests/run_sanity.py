@@ -20,13 +20,14 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from signal.spread import compute_spread, rolling_zscore
-from signal.cointegration import rolling_adf_pvalue
-from backtest.engine import BacktestConfig, run_backtest
-from backtest.metrics import sharpe
+from strategies.statarb.spread import compute_spread, rolling_zscore
+from strategies.statarb.cointegration import rolling_adf_pvalue
+from core.backtest.engine import BacktestConfig, run_backtest
+from core.backtest.metrics import sharpe
 from tests._data import get_data
 from tests import test_causality
-from config import HEDGE_WINDOW as HEDGE_W, Z_WINDOW as Z_W, ADF_WINDOW as ADF_W, ADF_STEP, BARS_PER_YEAR, INTERVAL
+from strategies.statarb.config import HEDGE_WINDOW as HEDGE_W, Z_WINDOW as Z_W, ADF_WINDOW as ADF_W, ADF_STEP
+from core.config import BARS_PER_YEAR, INTERVAL
 
 
 def build_signals(close_eth, close_btc):
